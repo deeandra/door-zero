@@ -1,0 +1,6 @@
+{
+    "configuration": "FlashFreq=80,UploadSpeed=921600,DebugLevel=none",
+    "board": "esp32:esp32:esp32doit-devkit-v1",
+    "sketch": "sketch_mar30a.ino",
+    "port": "COM3"
+}
