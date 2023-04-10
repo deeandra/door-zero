@@ -8,9 +8,16 @@
 #define BTN_DOWN 27
 #define BTN_A 33
 #define BTN_B 32
-#define BTN_MENU 35
-#define BTN_LOG 34
+#define BTN_MENU 26
+#define BTN_LOG 21
 #define SPEAKER 25
+
+const unsigned short EEPROM_SIZE = 26;
+const unsigned short CURRENT_ROOM_ADDRESS = 0;
+const unsigned short CHARA_X_ADDRESS = 2;
+const unsigned short CHARA_Y_ADDRESS = 4;
+const unsigned short DIRECTION_ID_ADDRESS = 6;
+const unsigned short VISITED_ROOM_ADDRESS = 8;
 
 const unsigned short SCREEN_WIDTH = 320;
 const unsigned short SCREEN_HEIGHT = 240;
@@ -18,6 +25,9 @@ const unsigned short SPRITE_WIDTH = 32;
 const unsigned short SPRITE_HEIGHT = 48;
 
 const unsigned short ROOM_COUNT = 9;
+
+TFT_eSPI tft = TFT_eSPI();
+
 
 struct Room {
 
@@ -27,6 +37,7 @@ struct Room {
 	unsigned short startingXY[2]; 
     unsigned short startingDirection;
 	const unsigned short (*collisionZones)[2];
+    unsigned short collisionNum;
 	unsigned short letterXY[5][2]; 
 	std::string letter[20];	
 	unsigned short musicXY[5][2];  
@@ -155,3 +166,129 @@ std::map<Button, unsigned short> direction = {
     {LEFT, 4}
 };
 
+
+unsigned short currentRoom;
+Room thisRoom;
+unsigned short visitedRooms[ROOM_COUNT];
+
+unsigned short charaX;
+unsigned short charaY;
+const unsigned short STEP_SIZE = 8;
+const unsigned short TILE_SIZE = 16;
+
+const unsigned short START_ARROW_X = 80;
+const unsigned short START_ARROW_Y_CONTINUE = 136;
+const unsigned short START_ARROW_Y_NEWGAME = 168;
+
+StartPageState startPageState = OPTION_NEWGAME;
+GameState gameState = START;
+RoomState roomState = IDLE;
+
+unsigned short directionId;
+unsigned short lastPose = 0;
+unsigned long lastAnimationTime = 0;
+unsigned short lastDirection = 1;
+RoomState lastRoomState = IDLE;
+
+unsigned long lastButtonPress = 0;
+bool processBtnPress = true;
+Button lastBtn;
+
+bool dialogueBoxIsOpen = false;
+
+TFT_eSprite chara = TFT_eSprite(&tft);
+TFT_eSprite bg = TFT_eSprite(&tft);
+TFT_eSprite arrow = TFT_eSprite(&tft);
+TFT_eSprite dialogueBox = TFT_eSprite(&tft);
+
+void pushBg2x() {
+    unsigned short count = 0;
+
+    for (int y=0; y<SCREEN_HEIGHT; y++) {
+        for (int x=0; x<SCREEN_WIDTH; x++) {
+            if((y % 2 == 0) && (x % 2 == 0)){  
+                tft.drawPixel(x, y, thisRoom.background[count]);
+                tft.drawPixel(x+1, y, thisRoom.background[count]);
+                tft.drawPixel(x, y+1, thisRoom.background[count]);
+                tft.drawPixel(x+1, y+1, thisRoom.background[count]);
+                count++;
+            }
+        }
+    }
+}
+
+
+bool EEPROMIsEmpty() {
+    if(EEPROM.read(CHARA_X_ADDRESS) == 0 && EEPROM.read(CHARA_Y_ADDRESS) == 0){
+        return true;
+    }
+    return false;
+}
+
+void initializeEEPROM() {
+    unsigned short currentRoom_i = 6;
+    unsigned short charaX_i = 144;
+    unsigned short charaY_i = 96;
+    unsigned short directionId_i = 2;
+    unsigned short visitedRooms_i[ROOM_COUNT] = {0,0,0,0,0,0,1,0,0};
+
+    short address = 0;
+
+    EEPROM.write(address, currentRoom_i);
+    address += sizeof(currentRoom_i);
+    Serial.println(address);
+    EEPROM.write(address, charaX_i);
+    address += sizeof(charaX_i);
+    Serial.println(address);
+    EEPROM.write(address, charaY_i);
+    address += sizeof(charaY_i);
+    Serial.println(address);
+    EEPROM.write(address, directionId_i);
+    address += sizeof(directionId_i);
+    Serial.println(address);
+    for (short i=0; i<ROOM_COUNT; i++) {
+        EEPROM.write(address, visitedRooms_i[i]);
+        address += sizeof(visitedRooms_i[i]);
+        Serial.println(address);
+    }
+    EEPROM.commit();
+
+    Serial.println("EEPROM initialized");
+}
+
+void readEEPROM() {
+    short address = 0;
+    currentRoom = EEPROM.read(CURRENT_ROOM_ADDRESS);
+    charaX = EEPROM.read(CHARA_X_ADDRESS);
+    charaY = EEPROM.read(CHARA_Y_ADDRESS);
+    directionId = EEPROM.read(DIRECTION_ID_ADDRESS);
+    for (short i=0; i<ROOM_COUNT; i++) {
+        visitedRooms[i] = EEPROM.read(VISITED_ROOM_ADDRESS+(i*2));
+    }
+    Serial.println("EEPROM read");
+}
+
+void writeEEPROM() {
+    short address = 0;
+
+    EEPROM.write(address, currentRoom);
+    address += sizeof(currentRoom);
+    Serial.println(address);
+    EEPROM.write(address, charaX);
+    address += sizeof(charaX);
+    Serial.println(address);
+    EEPROM.write(address, charaY);
+    address += sizeof(charaY);
+    Serial.println(address);
+    EEPROM.write(address, directionId);
+    address += sizeof(directionId);
+    Serial.println(address);
+    for (short i=0; i<ROOM_COUNT; i++) {
+        EEPROM.write(address, visitedRooms[i]);
+        address += sizeof(visitedRooms[i]);
+        Serial.println(address);
+    }
+    
+    EEPROM.commit();
+    Serial.println("EEPROM written");
+}

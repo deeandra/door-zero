@@ -1,62 +1,19 @@
 #include <TFT_eSPI.h>
-// #include <SD.h>
-// #include <FS.h>
-// #include <SPI.h>
+#include <EEPROM.h>
 
 #include "bg_data.h"
 #include "sprites_array.h"
 #include "game.h"
+#include "game_sound.h"
 #include "rooms.h"
-
-// #define SD_CS  5
-// #define TFT_CS 15
-// #define MOSI   23
-// #define MISO   19
-// #define SCK    18
-
-
-TFT_eSPI tft = TFT_eSPI();
-
-// SDLib::SDClass SD;
-// SD.begin(5);
-
-unsigned short currentRoom;
-Room thisRoom;
-
-File saveFile;
-unsigned short visitedRooms[ROOM_COUNT];
-
-unsigned short charaX;
-unsigned short charaY;
-const unsigned short STEP_SIZE = 8;
-const unsigned short TILE_SIZE = 16;
-
-const unsigned short START_ARROW_X = 80;
-const unsigned short START_ARROW_Y_CONTINUE = 136;
-const unsigned short START_ARROW_Y_NEWGAME = 168;
-
-StartPageState startPageState = OPTION_NEWGAME;
-GameState gameState = START;
-RoomState roomState = IDLE;
-
-unsigned short directionId;
-unsigned short lastPose = 0;
-unsigned long lastAnimationTime = 0;
-unsigned short lastDirection = 1;
-RoomState lastRoomState = IDLE;
-
-unsigned long lastButtonPress = 0;
-bool processBtnPress = true;
-Button lastBtn;
-
-TFT_eSprite chara = TFT_eSprite(&tft);
-TFT_eSprite bg = TFT_eSprite(&tft);
-TFT_eSprite arrow = TFT_eSprite(&tft);
 
 void moveChara();
 void idle_animation();
 void start();
 void roomInit();
+void showDialogueBox();
+void hideDialogueBox();
+void printDialogue(std::string dialogue);
 
 void patchBg(unsigned short positionX, unsigned short positionY)
 {
@@ -84,21 +41,46 @@ void patchBg(unsigned short positionX, unsigned short positionY)
     return;
 }
 
-bool collisionDetected(const unsigned short collisions[][2], unsigned short collisionNum){
+unsigned short* arrayBgCustom(unsigned short positionX, unsigned short positionY, unsigned short cropWidth, unsigned short cropHeight)
+{
+    unsigned int count = 0;
+    unsigned short croppedBg[cropHeight * cropWidth];
+
+    for (int y = 0; y < cropHeight; y++)
+    {
+        for (int x = 0; x < cropWidth; x++)
+        {
+            if((y % 2 == 0) && (x % 2 == 0)){  
+                count = x + (y*cropWidth);
+
+                croppedBg[count] = thisRoom.background[(SCREEN_WIDTH/2 * (y/2 + positionY/2)) + (x/2 + positionX/2)];
+                croppedBg[count+1] = thisRoom.background[(SCREEN_WIDTH/2 * (y/2 + positionY/2)) + (x/2 + positionX/2)];
+                croppedBg[count+cropWidth] = thisRoom.background[(SCREEN_WIDTH/2 * (y/2 + positionY/2)) + (x/2 + positionX/2)];
+                croppedBg[count+cropWidth+1] = thisRoom.background[(SCREEN_WIDTH/2 * (y/2 + positionY/2)) + (x/2 + positionX/2)];
+            }
+        }
+    }
+    // bg.pushImage(0, 0, cropWidth, cropHeight, croppedBg);
+    // tft.pushImage(positionX, positionY, cropWidth, cropHeight, croppedBg);
+    return croppedBg;
+}
+
+
+bool collisionDetected() {
     unsigned short charaBoxX = charaX; 
     unsigned short charaBoxY = charaY + 32; // untuk kaki nya aja
     unsigned short charaBoxW = SPRITE_WIDTH;
     unsigned short charaBoxH = SPRITE_HEIGHT - 32;
     unsigned short collisionWH = 16;
 
-    for(int i=0; i<collisionNum; i++){
-        if(collisions[i][0] == 0 && collisions[i][1] == 0){
+    for(int i=0; i<thisRoom.collisionNum; i++){
+        if(thisRoom.collisionZones[i][0] == 0 && thisRoom.collisionZones[i][1] == 0){
             return false;
         }
-        if (charaBoxX < collisions[i][0] + collisionWH &&
-            charaBoxX + charaBoxW > collisions[i][0] &&
-            charaBoxY < collisions[i][1] + collisionWH &&
-            charaBoxY + charaBoxH > collisions[i][1]){
+        if (charaBoxX < thisRoom.collisionZones[i][0] + collisionWH &&
+            charaBoxX + charaBoxW > thisRoom.collisionZones[i][0] &&
+            charaBoxY < thisRoom.collisionZones[i][1] + collisionWH &&
+            charaBoxY + charaBoxH > thisRoom.collisionZones[i][1]){
                 return true;
             }
     }
@@ -119,51 +101,204 @@ void loadingScreen() {
 
 }
 
-void showDialogueBox() {
-
-}
-
 void readRoomLetter() {
+    showDialogueBox();
+    short index = 0;
+    printDialogue(thisRoom.letter[index]);
+    delay(300);
 
+    while (true) {
+        if (digitalRead(BTN_LOG) == LOW) {
+            hideDialogueBox();
+            return;
+        }
+        else if (digitalRead(BTN_A) == LOW) {
+            index++;
+            if (index==20 || thisRoom.letter[index].empty()){
+                hideDialogueBox();
+                return;
+            }
+            printDialogue(thisRoom.letter[index]);
+            delay(300);
+        }
+    }
 }
 
 void playRoomMusic() {
 
 }
 
+void showDialogueBox() {
+    int y = 0;
+    while(true){
+        if(millis() - lastAnimationTime > 50){
+            y += 8;
+            tft.pushImage(0, SCREEN_HEIGHT-y, SCREEN_WIDTH, 80, dialogue_box);
+            lastAnimationTime = millis();
+            if(y==80){
+                break;
+            }
+        }
+    }
+    dialogueBoxIsOpen = true;
+}
+
+void hideDialogueBox() {
+    dialogueBox.createSprite(SCREEN_WIDTH, 80);
+    dialogueBox.setSwapBytes(true);
+
+    tft.fillRect(20, 180, 280, 40, TFT_WHITE);
+
+    int y = 80;
+    while(true){
+        if(millis() - lastAnimationTime > 50){
+            dialogueBox.pushImage(0, 80-y, SCREEN_WIDTH, 16, arrayBgCustom(0, SCREEN_HEIGHT-y, SCREEN_WIDTH, 16));
+            y -= 8;
+            if (directionId == 1) { // UP
+                chara.pushImage(0, 0, SPRITE_WIDTH, SPRITE_HEIGHT, idle_up[lastPose]);
+            }
+            else if (directionId == 2) { // DOWN
+                chara.pushImage(0, 0, SPRITE_WIDTH, SPRITE_HEIGHT, idle_down[lastPose]);
+            }
+            else if (directionId == 3) { // RIGHT
+                chara.pushImage(0, 0, SPRITE_WIDTH, SPRITE_HEIGHT, idle_right[lastPose]);
+            }
+            else if (directionId == 4) { // LEFT
+                chara.pushImage(0, 0, SPRITE_WIDTH, SPRITE_HEIGHT, idle_left[lastPose]);
+            }
+            chara.pushToSprite(&dialogueBox, charaX, charaY-160, TFT_BLACK);
+            dialogueBox.pushImage(0, 80-y, SCREEN_WIDTH, 80, dialogue_box);
+            dialogueBox.pushSprite(0, 160);
+            lastAnimationTime = millis();
+            if (y==0) {
+                break;
+            }
+        }
+    }
+    dialogueBox.deleteSprite();
+    dialogueBoxIsOpen = false;
+}
+
+void printDialogue(std::string dialogue) {
+    tft.setTextColor(0x39CA);
+    tft.setTextSize(2);
+    
+    short x = 22;
+    short stepX = 12;
+    short y = 182;
+    short stepY = 18;
+
+    short count = 0;
+    short countWordChar;
+    bool newline = false;
+
+    tft.fillRect(20, 180, 280, 40, TFT_WHITE);
+
+    for (short i=0; i<dialogue.length(); i++) {
+        if (x + (count+1)*stepX > 298 || newline==true) {
+            count = 0;
+            y = y + stepY;
+            newline = false;
+            if (std::isspace(dialogue[i])) {
+                continue;
+            }
+        }
+        if (std::isspace(dialogue[i])) {
+            countWordChar = 0;
+            short index = 1;
+            while (true) {
+                if(i+index == dialogue.length()) {
+                    break;
+                }
+                if (std::isspace(dialogue[i+index])) {
+                    break;
+                }
+                index++;
+                countWordChar++;
+            }
+            if (x + (count+1+countWordChar)*stepX > 298) {
+                newline = true;
+            }
+        }
+        tft.setCursor(x + (count*stepX), y, 1);
+        tft.print(dialogue[i]);
+        playIfNotMute(NOTE_A4, 25);
+        delay(25);
+        count++;
+    }
+    stopIfNotMute();
+}
+
+void startTutorial() {
+    showDialogueBox();
+    printDialogue("Hello world! What a wonderful day!");
+    while(true){}
+    
+}
+
 void chooseDoor() {
     if (thisRoom.roomNumber==6){
         currentRoom = 5;
-        loadingScreen();
+        // loadingScreen();
         roomInit();
+        // startTutorial();
     }
 
-    showDialogueBox();
+    // showDialogueBox();
 
-    while(true){
+    // while(true){
 
-    }
+    // }
 }
 
 void aIsPushed_room() {
+    if ((millis() - lastButtonPress) < 300) {
+        return;
+    }
+
+    lastButtonPress = millis();
+
     short interactNum;
-    short (*interactZones)[2];
+    short interactZones[3][2];
     
     if (directionId==1) {
-        short zones[2][2] = {{charaX, charaY+32-TILE_SIZE}, {charaX+TILE_SIZE, charaY+32-TILE_SIZE}};
-        interactZones = zones;
+        // short zones[2][2] = {{charaX, charaY+32-TILE_SIZE}, {charaX+TILE_SIZE, charaY+32-TILE_SIZE}};
+        interactZones[0][0] = charaX;
+        interactZones[0][1] = charaY+32-TILE_SIZE;
+        interactZones[1][0] = charaX+TILE_SIZE;
+        interactZones[1][1] = charaY+32-TILE_SIZE;
+        Serial.println(interactZones[0][0]);
+        Serial.println(interactZones[0][1]);
+        Serial.println(interactZones[1][0]);
+        Serial.println(interactZones[1][1]);
         interactNum = 2;
     }
     else if (directionId==2) {
-        short zones[2][2] = {{charaX, charaY+SPRITE_HEIGHT}, {charaX+TILE_SIZE, charaY+SPRITE_HEIGHT}};
+        // short zones[2][2] = {{charaX, charaY+SPRITE_HEIGHT}, {charaX+TILE_SIZE, charaY+SPRITE_HEIGHT}};
+        interactZones[0][0] = charaX;
+        interactZones[0][1] = charaY+SPRITE_HEIGHT;
+        interactZones[1][0] = charaX+TILE_SIZE;
+        interactZones[1][1] = charaY+SPRITE_HEIGHT;
         interactNum = 2;
     }
     else if (directionId==3) {
-        short zones[3][2] = {{charaX-TILE_SIZE, charaY}, {charaX-TILE_SIZE, charaY+TILE_SIZE}, {charaX-TILE_SIZE, charaY+(2*TILE_SIZE)}};
+        // short zones[3][2] = {{charaX-TILE_SIZE, charaY}, {charaX-TILE_SIZE, charaY+TILE_SIZE}, {charaX-TILE_SIZE, charaY+(2*TILE_SIZE)}};
+        interactZones[0][0] = charaX-TILE_SIZE;
+        interactZones[0][1] = charaY;
+        interactZones[1][0] = charaX-TILE_SIZE;
+        interactZones[1][1] = charaY+TILE_SIZE;
+        interactZones[2][0] = charaX-TILE_SIZE;
+        interactZones[2][1] = charaY+(2*TILE_SIZE);
         interactNum = 3;
     }
-    else { //directionId==4
-        short zones[3][2] = {{charaX+SPRITE_WIDTH, charaY}, {charaX+SPRITE_WIDTH, charaY+TILE_SIZE}, {charaX+SPRITE_WIDTH, charaY+(2*TILE_SIZE)}};
+    else if (directionId==4){ //directionId==4
+        // short zones[3][2] = {{charaX+SPRITE_WIDTH, charaY}, {charaX+SPRITE_WIDTH, charaY+TILE_SIZE}, {charaX+SPRITE_WIDTH, charaY+(2*TILE_SIZE)}};
+        interactZones[0][0] = charaX+SPRITE_WIDTH;
+        interactZones[0][1] = charaY;
+        interactZones[1][0] = charaX+SPRITE_WIDTH;
+        interactZones[1][1] = charaY+TILE_SIZE;
+        interactZones[2][0] = charaX+SPRITE_WIDTH;
+        interactZones[2][1] = charaY+(2*TILE_SIZE);
         interactNum = 3;
     }
 
@@ -176,6 +311,7 @@ void aIsPushed_room() {
             }
             if((interactZones[i][0]==thisRoom.letterXY[j][0]) && (interactZones[i][1]==thisRoom.letterXY[j][1])){
                 readRoomLetter();
+                return;
             }
         }
     }
@@ -183,12 +319,12 @@ void aIsPushed_room() {
     //music
     for (int i=0; i<interactNum; i++) {
         for (int j=0; j<5; j++){
-            if ((interactZones[i][0]==0 && interactZones[i][1]==0) || 
-                (thisRoom.musicXY[j][0]==0 && thisRoom.musicXY[j][1]==0)) {
+            if ((thisRoom.musicXY[j][0]==0 && thisRoom.musicXY[j][1]==0)) {
                 continue;
             }
             if((interactZones[i][0]==thisRoom.musicXY[j][0]) && (interactZones[i][1]==thisRoom.musicXY[j][1])){
                 playRoomMusic();
+                return;
             }
         }
     }
@@ -196,201 +332,65 @@ void aIsPushed_room() {
     //door
     for (int i=0; i<interactNum; i++) {
         for (int j=0; j<7; j++){
-            if ((interactZones[i][0]==0 && interactZones[i][1]==0) || 
-                (thisRoom.doorXY[j][0]==0 && thisRoom.doorXY[j][1]==0)) {
-                continue;
-            }
-            if((interactZones[i][0]==thisRoom.doorXY[j][0]) && (interactZones[i][1]==thisRoom.doorXY[j][1])){
-                chooseDoor();
-            }
-        }
-    }
-}
-
-void pushBg2x() {
-    unsigned short count = 0;
-
-    for (int y=0; y<SCREEN_HEIGHT; y++) {
-        for (int x=0; x<SCREEN_WIDTH; x++) {
-            if((y % 2 == 0) && (x % 2 == 0)){  
-                tft.drawPixel(x, y, thisRoom.background[count]);
-                tft.drawPixel(x+1, y, thisRoom.background[count]);
-                tft.drawPixel(x, y+1, thisRoom.background[count]);
-                tft.drawPixel(x+1, y+1, thisRoom.background[count]);
-                count++;
-            }
+            if ((thisRoom.doorXY[j][0]!=0 && thisRoom.doorXY[j][1]!=0)) {
+                if((interactZones[i][0]==thisRoom.doorXY[j][0]) && (interactZones[i][1]==thisRoom.doorXY[j][1])){
+                    chooseDoor();
+                    return;
+                }
+            } 
         }
     }
 }
 
 void roomInit()
 {
-    Serial.println("roomInit start");
+    tft.fillScreen(TFT_BLACK);
+
     thisRoom = rooms[currentRoom];
     charaX = thisRoom.startingXY[0];
     charaY = thisRoom.startingXY[1];
     directionId = thisRoom.startingDirection;
-    Serial.println("RoomInit 2");
 
-    // bgFile = SD.open("/anam.bmp", FILE_READ);
-
-    // getBgArray();
-    // thisRoom.background = anam_room;
-
-    // tft.pushImage(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, thisRoom.background);
     pushBg2x();
-    Serial.println("RoomInit after pushbg2x");
     
     bg.createSprite(SPRITE_WIDTH+STEP_SIZE, SPRITE_HEIGHT+STEP_SIZE);
     bg.setSwapBytes(true);
 
     chara.createSprite(SPRITE_WIDTH, SPRITE_HEIGHT);
-    // chara.setSwapBytes(true);
-// 
-    //  bg.pushImage(0, 0, bgWidth, bgHeight, home);
     patchBg(charaX, charaY);
     chara.pushImage(0, 0, SPRITE_WIDTH, SPRITE_HEIGHT, idle_down[0]);
-    //  chara.pushToSprite(&bg, charaX, charaY, TFT_BLACK);
     chara.pushToSprite(&bg, 0, 0, TFT_BLACK);
 
     bg.pushSprite(charaX, charaY);
-    Serial.println("RoomInit end");
 }
 
-void readSaveFile() {
-    // digitalWrite(TFT_CS, HIGH);
-    // digitalWrite(SD_CS, LOW);
+void loadSave()
+{
+    thisRoom = rooms[currentRoom];
 
-    // SPI.begin(SCK, MISO, MOSI, SD_CS);
-    // if(!SD.begin(SD_CS, SPI)){
-    //     Serial.println("Card Mount Failed (read)");
-    //     return;
-    // }
+    pushBg2x();
+    
+    bg.createSprite(SPRITE_WIDTH+STEP_SIZE, SPRITE_HEIGHT+STEP_SIZE);
+    bg.setSwapBytes(true);
 
-    // String line;
-    // saveFile = SD.open("/save.txt", FILE_READ);
+    chara.createSprite(SPRITE_WIDTH, SPRITE_HEIGHT);
+    patchBg(charaX, charaY);
+    chara.pushImage(0, 0, SPRITE_WIDTH, SPRITE_HEIGHT, idle_down[0]);
+    chara.pushToSprite(&bg, 0, 0, TFT_BLACK);
 
-    // line = saveFile.readStringUntil('\n');
-    // currentRoom = atoi(line.c_str());
-    // line = saveFile.readStringUntil('\n');
-    // charaX = atoi(line.c_str());
-    // line = saveFile.readStringUntil('\n');
-    // charaY = atoi(line.c_str());
-    // line = saveFile.readStringUntil('\n');
-    // directionId = atoi(line.c_str());
-    // for(short i=0; i<ROOM_COUNT; i++){ 
-    //     line = saveFile.readStringUntil('\n');
-    //     visitedRooms[i] = atoi(line.c_str());
-    // }
-
-    // saveFile.close();
-    // Serial.println("read done");
-    // SD.end();
-    // SPI.endTransaction();
-    // SPI.end();
-
-    // digitalWrite(SD_CS, HIGH);
-    // digitalWrite(TFT_CS, LOW);
-}
-
-void writeSaveFile() {
-    // digitalWrite(TFT_CS, HIGH);
-    // digitalWrite(SD_CS, LOW);
-
-    // SPI.begin(SCK, MISO, MOSI, SD_CS);
-    // if(!SD.begin(SD_CS, SPI)){
-    //     Serial.println("Card Mount Failed (write)");
-    //     return;
-    // }
-
-    // saveFile = SD.open("/save.txt", FILE_WRITE);
-
-    // saveFile.println(currentRoom); //currentRoom
-    // saveFile.println(charaX); //charaX
-    // saveFile.println(charaY); //charaY
-    // saveFile.println(directionId);
-    // for(short i=0; i<ROOM_COUNT; i++){ //visitedRooms
-    //     saveFile.println(visitedRooms[i]); 
-    // }
-
-    // saveFile.close();
-    // Serial.println("write done");
-    // SD.end();
-    // SPI.endTransaction();
-    // SPI.end();
-
-    // digitalWrite(SD_CS, HIGH);
-    // digitalWrite(TFT_CS, LOW);
-}
-
-void overwriteSaveFile() {
-    // digitalWrite(TFT_CS, HIGH);
-    // digitalWrite(SD_CS, LOW);
-
-    // SPI.begin(SCK, MISO, MOSI, SD_CS);
-    // if(!SD.begin(SD_CS, SPI)){
-    //     Serial.println("Card Mount Failed (overwrite))");
-    //     return;
-    // }
-
-    // saveFile = SD.open("/save.txt", FILE_WRITE);
-
-    // saveFile.println(6); //currentRoom
-    // saveFile.println(rooms[6].startingXY[0]); //charaX
-    // saveFile.println(rooms[6].startingXY[1]); //charaY
-    // saveFile.println(rooms[6].startingDirection);
-    // for(short i=0; i<ROOM_COUNT; i++){ //visitedRooms
-    //     if (i==6) {
-    //         saveFile.println(1);
-    //     }
-    //     else {
-    //         saveFile.println(0);
-    //     }
-    // }
-    // saveFile.close();
-    // Serial.println("overwrite done");
-    // SD.end();
-    // SPI.endTransaction();
-    // SPI.end();
-
-    // digitalWrite(SD_CS, HIGH);
-    // digitalWrite(TFT_CS, LOW);
+    bg.pushSprite(charaX, charaY);
 }
 
 void setup()
 {
     loadRoomData();
 
+    EEPROM.begin(EEPROM_SIZE);
+
     Serial.begin(115200);
-    if(EEPROM.read(0) )
-
-    // // pinMode(TFT_CS, OUTPUT);
-    // // pinMode(SD_CS, OUTPUT);
-    // digitalWrite(TFT_CS, HIGH);
-    // digitalWrite(SD_CS, LOW);
-
-    // SPI.begin(SCK, MISO, MOSI, SD_CS);
-    // if(!SD.begin(SD_CS, SPI)){
-    //     Serial.println("Card Mount Failed (setup)");
-    //     return;
-    // }
-
-
-    // saveFile = SD.open("/save.txt", FILE_READ);
-
-    // if (!saveFile) {
-    //     saveFile.close();
-    //     overwriteSaveFile();
-    // }
-
-    // // readSaveFile();
-    // SD.end();
-    // SPI.endTransaction();
-    // SPI.end();
-
-    // digitalWrite(SD_CS, HIGH);
-    // digitalWrite(TFT_CS, LOW);
-    
+    if (EEPROMIsEmpty()) {
+        initializeEEPROM();
+    }
     
     pinMode(BTN_RIGHT, INPUT_PULLUP);
     pinMode(BTN_UP, INPUT_PULLUP);
@@ -408,10 +408,12 @@ void setup()
 
     tft.pushImage(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, start_bg_full);
     start();
+    playSong();
 }
 
 void loop()
 {
+    if(MENU)
     if (gameState == ROOM)
     {
         //animasi idle
@@ -434,10 +436,10 @@ void loop()
 
         // process pencet A 
         if (digitalRead(pin[A]) == LOW) {
-            // aIsPushed_room();
-            // if(millis() - lastButtonPress > 1000){
-            //     Serial.println("A is clicked!");
-            //     writeSaveFile();
+            aIsPushed_room();
+            // if (millis() - lastButtonPress > 1000) {
+            //     lastButtonPress = millis();
+            //     aIsPushed_room();
             // }
         }
         // if (digitalRead(pin[B]) == LOW) {
@@ -466,7 +468,9 @@ void loop()
                     {
                         gameState = ROOM;
 
-                        readSaveFile();
+                        readEEPROM();
+
+                        delay(1000);
 
                         Serial.println(currentRoom);
                         Serial.println(charaX);
@@ -480,15 +484,14 @@ void loop()
                         // charaY = 96;
                         // directionId = 2;
 
-                        delay(1000);
-                        roomInit();
+                        loadSave();
                     }
                     else if (startPageState == OPTION_NEWGAME)
                     {
                         gameState = ROOM;
-                        overwriteSaveFile();
-                        readSaveFile();
-                        roomInit();
+                        initializeEEPROM();
+                        readEEPROM();
+                        loadSave();
                     }
                 }
             }
@@ -517,7 +520,7 @@ void moveChara()
     if (directionId == 1)
     { // UP
         charaY -= STEP_SIZE;
-        if (collisionDetected(thisRoom.collisionZones, 36)) {
+        if (collisionDetected()) {
             charaY += STEP_SIZE;
         }
         patchBg(charaX, charaY);
@@ -528,7 +531,7 @@ void moveChara()
     else if (directionId == 2)
     { // DOWN
         charaY += STEP_SIZE;
-        if (collisionDetected(thisRoom.collisionZones, 36)) {
+        if (collisionDetected()) {
             charaY -= STEP_SIZE;
         }
         patchBg(charaX, charaY-STEP_SIZE);
@@ -540,7 +543,7 @@ void moveChara()
     else if (directionId == 3)
     { // RIGHT
         charaX -= STEP_SIZE;
-        if (collisionDetected(thisRoom.collisionZones, 36)) {
+        if (collisionDetected()) {
             charaX += STEP_SIZE;
         }
         patchBg(charaX, charaY);
@@ -552,7 +555,7 @@ void moveChara()
     else if (directionId == 4)
     { // LEFT
         charaX += STEP_SIZE;
-        if (collisionDetected(thisRoom.collisionZones, 36)) {
+        if (collisionDetected()) {
             charaX -= STEP_SIZE;
         }
         patchBg(charaX-STEP_SIZE, charaY);

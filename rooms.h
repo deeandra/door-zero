@@ -18,6 +18,7 @@ void load8() {
     rooms[8].setStartingXY(startingXY_s);
     rooms[8].startingDirection = 1;
     rooms[8].collisionZones = collision_anam;
+    rooms[8].collisionNum = 36;
     rooms[8].setLetterXY(letterXY_s, 2);
     rooms[8].setLetter(letter_s, 2);
     rooms[8].setMusicXY(musicXY_s, 2);
@@ -37,6 +38,7 @@ void load6() {
     rooms[6].setStartingXY(startingXY_s);
     rooms[6].startingDirection = 2;
     rooms[6].collisionZones = collision_start_room;
+    rooms[6].collisionNum = 18;
     rooms[6].setDoorXY(doorXY_s, 4);
 }
 
@@ -44,7 +46,9 @@ void load5() {
     //start2 room
     unsigned short startingXY_s[2] = {144, 192};
     unsigned short letterXY_s[4][2] = {{144, 144}, {144, 160}, {160, 144}, {160, 160}};
-    std::string letter_s[3] = {"It's a toilet plunger.", "And it's stuck to the ground.", "'Take this' my ass, what a useless waste of white paint."};
+    std::string letter_s[3] = {"It's a toilet plunger.", 
+                                "And it's stuck to the ground.", 
+                                "bitch what am I supposed to take??"};
     unsigned short doorXY_s[6][2] = {{128,224}, {144,224}, {160,224}, {176,224}, {144, 48}, {160, 48}};
     unsigned short doors_s[4] = {999,999,8,999};
 
@@ -54,6 +58,7 @@ void load5() {
     rooms[5].setStartingXY(startingXY_s);
     rooms[5].startingDirection = 1;
     rooms[5].collisionZones = collision_start2_room;
+    rooms[5].collisionNum = 56;
     rooms[5].setLetterXY(letterXY_s, 4);
     rooms[5].setLetter(letter_s, 3);
     rooms[5].setDoorXY(doorXY_s, 6);
